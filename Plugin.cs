@@ -9,7 +9,7 @@ using UnityEngine.Rendering;
 
 namespace MikuBongFix
 {
-    [BepInPlugin("com.github.FelineEntity.MikuBongFix", "MikuBongFix", "1.0.1")]
+    [BepInPlugin("com.github.FelineEntity.MikuBongFix", "MikuBongFix", "1.0.2")]
     public class Plugin : BaseUnityPlugin
     {
         private const string BundleFileName = "mikupeak";
@@ -19,8 +19,6 @@ namespace MikuBongFix
         private const string MainTextureAssetPath = "assets/mikufumo/miku.png";
         private static readonly string[] PreferredTextureProps = { "_BaseMap", "_MainTex" };
         private static readonly Color MikuStyleTint = new Color(0.98f, 1f, 1f, 1f);
-
-        internal const bool VerboseLoggingEnabled = false;
 
         private static ManualLogSource _log;
         internal static ManualLogSource Log
@@ -74,7 +72,6 @@ namespace MikuBongFix
         private void Awake()
         {
             Log = Logger;
-            Log.LogInfo(Name + " " + Version + " loaded.");
             Harmony.PatchAll(Assembly.GetExecutingAssembly());
             LoadAssets();
         }
@@ -88,9 +85,6 @@ namespace MikuBongFix
                 Log.LogError("Failed to load AssetBundle: " + bundlePath);
                 return;
             }
-
-            VerboseLog("AssetBundle loaded from: " + bundlePath);
-            LogBundleAssets(Bundle);
 
             MochiPrefab = Bundle.LoadAsset<GameObject>(PrefabAssetPath);
             MochiMaterial = Bundle.LoadAsset<Material>(MaterialAssetPath);
@@ -123,29 +117,11 @@ namespace MikuBongFix
                 Log.LogWarning("Failed to load replacement main texture.");
             }
 
-            Log.LogInfo("Assets ready for runtime replacement.");
         }
 
         internal static void VerboseLog(string message)
         {
-            if (VerboseLoggingEnabled && Log != null)
-            {
-                Log.LogInfo(message);
-            }
-        }
-
-        private static void LogBundleAssets(AssetBundle bundle)
-        {
-            if (!VerboseLoggingEnabled || bundle == null)
-            {
-                return;
-            }
-
-            string[] assets = bundle.GetAllAssetNames();
-            for (int i = 0; i < assets.Length; i++)
-            {
-                VerboseLog("AssetBundle entry: " + assets[i]);
-            }
+            // 调试日志已禁用 / debug logs disabled.
         }
 
         private static void ConfigureMochiMaterial(Texture2D mikuMainTexture)
@@ -180,15 +156,23 @@ namespace MikuBongFix
                 return false;
             }
 
-            if (material.GetTexture(propertyName) != null)
+            try
             {
+                if (material.GetTexture(propertyName) != null)
+                {
+                    return false;
+                }
+
+                material.SetTexture(propertyName, texture);
+                material.SetTextureScale(propertyName, Vector2.one);
+                material.SetTextureOffset(propertyName, Vector2.zero);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                VerboseLog("Skip texture assignment on material '" + material.name + "', property '" + propertyName + "': " + ex.Message);
                 return false;
             }
-
-            material.SetTexture(propertyName, texture);
-            material.SetTextureScale(propertyName, Vector2.one);
-            material.SetTextureOffset(propertyName, Vector2.zero);
-            return true;
         }
 
         private static void TryAssignTextureIfMissing(Material material, string[] propertyNames, Texture2D texture)
@@ -297,19 +281,8 @@ namespace MikuBongFix
 
             if (texture != null)
             {
-                if (material.HasProperty("_BaseMap"))
-                {
-                    material.SetTexture("_BaseMap", texture);
-                    material.SetTextureScale("_BaseMap", Vector2.one);
-                    material.SetTextureOffset("_BaseMap", Vector2.zero);
-                }
-
-                if (material.HasProperty("_MainTex"))
-                {
-                    material.SetTexture("_MainTex", texture);
-                    material.SetTextureScale("_MainTex", Vector2.one);
-                    material.SetTextureOffset("_MainTex", Vector2.zero);
-                }
+                TryAssignTextureIfMissing(material, "_BaseMap", texture);
+                TryAssignTextureIfMissing(material, "_MainTex", texture);
             }
 
             if (material.HasProperty("_Surface")) material.SetFloat("_Surface", 0f);
@@ -327,7 +300,7 @@ namespace MikuBongFix
 
         public const string Name = "MikuBongFix";
         public const string Id = "com.github.FelineEntity.MikuBongFix";
-        public const string Version = "1.0.1";
+        public const string Version = "1.0.2";
 
         internal static string directory
         {

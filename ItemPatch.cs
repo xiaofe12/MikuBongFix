@@ -18,12 +18,8 @@ namespace MikuBongFix
     /// </summary>
     public class MikuDeformGuard : MonoBehaviour
     {
-        private enum CuteMotionStyle
-        {
-            BounceWave = 0,
-            CheerTwirl = 1,
-            ShySnuggle = 2
-        }
+        private const float SqueezeDuration = 0.78f;
+        private const float SqueezeCompressPhase = 0.42f;
 
         private Transform[] _allTransforms = Array.Empty<Transform>();
         private Vector3[] _initialChildScales = Array.Empty<Vector3>();
@@ -31,17 +27,16 @@ namespace MikuBongFix
         private Quaternion _rootLocalRotation;
         private Vector3 _rootLocalScale;
         private Item _boundItem;
-        private float _motionSeed;
-        private CuteMotionStyle _activeCuteMotion;
-        private bool _wasPlayingCuteMotion;
-        private Character _lastMotionHolder;
+        private bool _wasUsing;
+        private float _squeezeElapsed = SqueezeDuration;
 
         public void Initialize(Vector3 rootLocalPosition, Quaternion rootLocalRotation, Vector3 rootLocalScale)
         {
             _rootLocalPosition = rootLocalPosition;
             _rootLocalRotation = rootLocalRotation;
             _rootLocalScale = rootLocalScale;
-            _motionSeed = Mathf.Abs(GetInstanceID()) * 0.137f;
+            _wasUsing = false;
+            _squeezeElapsed = SqueezeDuration;
             Capture();
         }
 
@@ -57,141 +52,58 @@ namespace MikuBongFix
             _rootLocalScale = rootLocalScale;
         }
 
-        private bool ShouldPlayCuteMotion()
+        private bool IsHeldAndUsing()
         {
             return _boundItem != null
-                && _boundItem.itemState == ItemState.Held;
+                && _boundItem.itemState == ItemState.Held
+                && (_boundItem.isUsingPrimary || _boundItem.isUsingSecondary);
         }
 
-        private Character GetCurrentHolder()
+        private void UpdateSingleSqueezeState()
         {
-            if (_boundItem == null)
+            bool isUsing = IsHeldAndUsing();
+            if (isUsing && !_wasUsing)
             {
-                return null;
+                _squeezeElapsed = 0f;
             }
 
-            return _boundItem.holderCharacter ?? _boundItem.trueHolderCharacter;
+            _wasUsing = isUsing;
+
+            if (_squeezeElapsed < SqueezeDuration)
+            {
+                _squeezeElapsed += Time.deltaTime;
+            }
         }
 
-        private void RefreshCuteMotionSelection()
+        private float EvaluateSingleSqueezeWeight()
         {
-            bool isPlayingCuteMotion = ShouldPlayCuteMotion();
-            Character currentHolder = GetCurrentHolder();
-
-            if (isPlayingCuteMotion && (!_wasPlayingCuteMotion || currentHolder != _lastMotionHolder))
-            {
-                _activeCuteMotion = (CuteMotionStyle)UnityEngine.Random.Range(0, 3);
-            }
-
-            _wasPlayingCuteMotion = isPlayingCuteMotion;
-            _lastMotionHolder = currentHolder;
-        }
-
-        private static float TwoStepPulse(float phase)
-        {
-            phase = Mathf.Repeat(phase, 1f);
-            if (phase < 0.20f)
-            {
-                return Mathf.SmoothStep(0f, 1f, phase / 0.20f);
-            }
-
-            if (phase < 0.38f)
-            {
-                return Mathf.SmoothStep(1f, 0f, (phase - 0.20f) / 0.18f);
-            }
-
-            if (phase < 0.56f)
+            if (_squeezeElapsed >= SqueezeDuration)
             {
                 return 0f;
             }
 
-            if (phase < 0.72f)
+            float normalized = Mathf.Clamp01(_squeezeElapsed / SqueezeDuration);
+            if (normalized <= SqueezeCompressPhase)
             {
-                return Mathf.SmoothStep(0f, 0.85f, (phase - 0.56f) / 0.16f);
+                return Mathf.SmoothStep(0f, 1f, normalized / SqueezeCompressPhase);
             }
 
-            if (phase < 0.90f)
-            {
-                return Mathf.SmoothStep(0.85f, 0f, (phase - 0.72f) / 0.18f);
-            }
-
-            return 0f;
+            float releasePhase = (normalized - SqueezeCompressPhase) / (1f - SqueezeCompressPhase);
+            return Mathf.SmoothStep(1f, 0f, Mathf.Clamp01(releasePhase));
         }
 
-        private Vector3 GetDesiredLocalPosition()
+        private Vector3 GetDesiredRootScale(float squeezeWeight)
         {
-            if (!ShouldPlayCuteMotion())
+            if (squeezeWeight <= 0.0005f)
             {
-                return _rootLocalPosition;
+                return _rootLocalScale;
             }
 
-            float time = Time.time + _motionSeed;
-            switch (_activeCuteMotion)
-            {
-                case CuteMotionStyle.CheerTwirl:
-                {
-                    float pulse = TwoStepPulse(time * 2.1f + 0.1f);
-                    float sway = Mathf.Sin(time * 6.2f + 0.5f) * 0.006f;
-                    float hop = pulse * 0.014f + Mathf.Sin(time * 3.4f + 1.1f) * 0.003f;
-                    float forward = pulse * 0.015f;
-                    return _rootLocalPosition + new Vector3(sway, hop, forward);
-                }
-                case CuteMotionStyle.ShySnuggle:
-                {
-                    float breathe = Mathf.Sin(time * 1.1f + 0.2f);
-                    float drift = Mathf.Sin(time * 0.72f + 1.35f);
-                    float nuzzle = Mathf.Sin(time * 1.6f + 2.1f);
-                    float side = drift * 0.011f;
-                    float dip = breathe * 0.005f;
-                    float forward = -0.007f + nuzzle * 0.003f;
-                    return _rootLocalPosition + new Vector3(side, dip, forward);
-                }
-                default:
-                {
-                    float bounce = Mathf.Sin(time * 4.2f) * 0.016f;
-                    float sway = Mathf.Sin(time * 2.1f + 0.6f) * 0.009f;
-                    float cuddle = Mathf.Sin(time * 3.1f + 1.4f) * 0.005f;
-                    return _rootLocalPosition + new Vector3(sway, bounce, cuddle);
-                }
-            }
-        }
-
-        private Quaternion GetDesiredLocalRotation()
-        {
-            if (!ShouldPlayCuteMotion())
-            {
-                return _rootLocalRotation;
-            }
-
-            float time = Time.time + _motionSeed;
-            switch (_activeCuteMotion)
-            {
-                case CuteMotionStyle.CheerTwirl:
-                {
-                    float pulse = TwoStepPulse(time * 2.1f + 0.1f);
-                    float nod = -pulse * 9f + Mathf.Sin(time * 6f + 0.2f) * 1.8f;
-                    float tilt = Mathf.Sin(time * 4.1f + 1.2f) * 4.5f;
-                    float twist = Mathf.Sin(time * 4.8f + 0.4f) * 10f + pulse * 6f;
-                    return _rootLocalRotation * Quaternion.Euler(nod, twist, tilt);
-                }
-                case CuteMotionStyle.ShySnuggle:
-                {
-                    float breathe = Mathf.Sin(time * 1.1f + 0.2f);
-                    float drift = Mathf.Sin(time * 0.72f + 1.35f);
-                    float nuzzle = Mathf.Sin(time * 1.6f + 2.1f);
-                    float nod = -5f + breathe * 2.5f;
-                    float tilt = 11f + nuzzle * 3f;
-                    float twist = drift * 6f;
-                    return _rootLocalRotation * Quaternion.Euler(nod, twist, tilt);
-                }
-                default:
-                {
-                    float nod = Mathf.Sin(time * 4f) * 6f;
-                    float tilt = Mathf.Sin(time * 3.1f + 0.2f) * 6.5f;
-                    float twist = Mathf.Sin(time * 2f + 0.8f) * 5f;
-                    return _rootLocalRotation * Quaternion.Euler(nod, twist, tilt);
-                }
-            }
+            Vector3 squeezeFactor = new Vector3(
+                1f - (0.14f * squeezeWeight),
+                1f + (0.11f * squeezeWeight),
+                1f - (0.14f * squeezeWeight));
+            return Vector3.Scale(_rootLocalScale, squeezeFactor);
         }
 
         public void Capture()
@@ -212,25 +124,22 @@ namespace MikuBongFix
                 Capture();
             }
 
-            RefreshCuteMotionSelection();
-
-            Vector3 desiredLocalPosition = GetDesiredLocalPosition();
-            if ((transform.localPosition - desiredLocalPosition).sqrMagnitude > 0.000001f)
+            if (transform.localPosition != _rootLocalPosition)
             {
-                float positionLerp = Mathf.Clamp01(Time.deltaTime * 16f);
-                transform.localPosition = Vector3.Lerp(transform.localPosition, desiredLocalPosition, positionLerp);
+                transform.localPosition = _rootLocalPosition;
             }
 
-            Quaternion desiredLocalRotation = GetDesiredLocalRotation();
-            if (Quaternion.Angle(transform.localRotation, desiredLocalRotation) > 0.05f)
+            if (transform.localRotation != _rootLocalRotation)
             {
-                float rotationLerp = Mathf.Clamp01(Time.deltaTime * 16f);
-                transform.localRotation = Quaternion.Slerp(transform.localRotation, desiredLocalRotation, rotationLerp);
+                transform.localRotation = _rootLocalRotation;
             }
 
-            if (transform.localScale != _rootLocalScale)
+            UpdateSingleSqueezeState();
+            float squeezeWeight = EvaluateSingleSqueezeWeight();
+            Vector3 desiredRootScale = GetDesiredRootScale(squeezeWeight);
+            if (transform.localScale != desiredRootScale)
             {
-                transform.localScale = _rootLocalScale;
+                transform.localScale = desiredRootScale;
             }
 
             for (int i = 0; i < _allTransforms.Length; i++)
@@ -379,7 +288,7 @@ namespace MikuBongFix
 
         private static bool IsBingBong(Item item)
         {
-            return item != null && item.name.Contains("BingBong");
+            return item != null && item.name.IndexOf("BingBong", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool IsMikuTransform(Transform transform)
@@ -464,6 +373,61 @@ namespace MikuBongFix
             return null;
         }
 
+        private static bool TrySetTextureSafe(Material material, string propertyName, Texture texture)
+        {
+            if (material == null || string.IsNullOrEmpty(propertyName) || !material.HasProperty(propertyName))
+            {
+                return false;
+            }
+
+            try
+            {
+                material.SetTexture(propertyName, texture);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Plugin.VerboseLog("[ItemPatch] Skip SetTexture on material '" + material.name + "' property '" + propertyName + "': " + ex.Message);
+                return false;
+            }
+        }
+
+        private static void TrySetTextureTransformSafe(Material material, string propertyName, Vector2 scale, Vector2 offset)
+        {
+            if (material == null || string.IsNullOrEmpty(propertyName) || !material.HasProperty(propertyName))
+            {
+                return;
+            }
+
+            try
+            {
+                material.SetTextureScale(propertyName, scale);
+                material.SetTextureOffset(propertyName, offset);
+            }
+            catch (Exception ex)
+            {
+                Plugin.VerboseLog("[ItemPatch] Skip texture transform on material '" + material.name + "' property '" + propertyName + "': " + ex.Message);
+            }
+        }
+
+        private static void ApplyMikuTextureSafe(Material material, Texture mikuTexture)
+        {
+            if (material == null || mikuTexture == null)
+            {
+                return;
+            }
+
+            if (TrySetTextureSafe(material, "_BaseMap", mikuTexture))
+            {
+                TrySetTextureTransformSafe(material, "_BaseMap", Vector2.one, Vector2.zero);
+            }
+
+            if (TrySetTextureSafe(material, "_MainTex", mikuTexture))
+            {
+                TrySetTextureTransformSafe(material, "_MainTex", Vector2.one, Vector2.zero);
+            }
+        }
+
         private static void DisableOptionalSurfaceTextures(Material material)
         {
             if (material == null)
@@ -471,11 +435,11 @@ namespace MikuBongFix
                 return;
             }
 
-            if (material.HasProperty("_BumpMap")) material.SetTexture("_BumpMap", null);
-            if (material.HasProperty("_NormalMap")) material.SetTexture("_NormalMap", null);
-            if (material.HasProperty("_OcclusionMap")) material.SetTexture("_OcclusionMap", null);
-            if (material.HasProperty("_MetallicGlossMap")) material.SetTexture("_MetallicGlossMap", null);
-            if (material.HasProperty("_SpecGlossMap")) material.SetTexture("_SpecGlossMap", null);
+            TrySetTextureSafe(material, "_BumpMap", null);
+            TrySetTextureSafe(material, "_NormalMap", null);
+            TrySetTextureSafe(material, "_OcclusionMap", null);
+            TrySetTextureSafe(material, "_MetallicGlossMap", null);
+            TrySetTextureSafe(material, "_SpecGlossMap", null);
 
             material.DisableKeyword("_NORMALMAP");
             material.DisableKeyword("_METALLICSPECGLOSSMAP");
@@ -552,20 +516,7 @@ namespace MikuBongFix
             if (mikuTexture != null)
             {
                 OptimizeTextureSampling(mikuTexture);
-
-                if (material.HasProperty("_BaseMap"))
-                {
-                    material.SetTexture("_BaseMap", mikuTexture);
-                    material.SetTextureScale("_BaseMap", Vector2.one);
-                    material.SetTextureOffset("_BaseMap", Vector2.zero);
-                }
-
-                if (material.HasProperty("_MainTex"))
-                {
-                    material.SetTexture("_MainTex", mikuTexture);
-                    material.SetTextureScale("_MainTex", Vector2.one);
-                    material.SetTextureOffset("_MainTex", Vector2.zero);
-                }
+                ApplyMikuTextureSafe(material, mikuTexture);
             }
 
             DisableOptionalSurfaceTextures(material);
@@ -613,20 +564,7 @@ namespace MikuBongFix
                     if (mikuTexture != null)
                     {
                         OptimizeTextureSampling(mikuTexture);
-
-                        if (material.HasProperty("_BaseMap"))
-                        {
-                            material.SetTexture("_BaseMap", mikuTexture);
-                            material.SetTextureScale("_BaseMap", Vector2.one);
-                            material.SetTextureOffset("_BaseMap", Vector2.zero);
-                        }
-
-                        if (material.HasProperty("_MainTex"))
-                        {
-                            material.SetTexture("_MainTex", mikuTexture);
-                            material.SetTextureScale("_MainTex", Vector2.one);
-                            material.SetTextureOffset("_MainTex", Vector2.zero);
-                        }
+                        ApplyMikuTextureSafe(material, mikuTexture);
                     }
 
                     DisableOptionalSurfaceTextures(material);
@@ -1036,6 +974,97 @@ namespace MikuBongFix
             }
         }
 
+        private static bool RendererHasMainTexSlot(Renderer renderer)
+        {
+            if (renderer == null)
+            {
+                return false;
+            }
+
+            Material[] materials = renderer.sharedMaterials;
+            if (materials == null || materials.Length == 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < materials.Length; i++)
+            {
+                Material material = materials[i];
+                if (material != null && material.HasProperty("_MainTex"))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static Material CreateMainTexCompatMaterial(Texture texture)
+        {
+            Shader shader = Shader.Find("Standard")
+                ?? Shader.Find("Unlit/Texture")
+                ?? Shader.Find("Universal Render Pipeline/Unlit")
+                ?? Shader.Find("Universal Render Pipeline/Lit")
+                ?? Shader.Find("W/Peak_Standard");
+
+            if (shader == null)
+            {
+                return null;
+            }
+
+            Material material = new Material(shader)
+            {
+                name = "Miku_MainTexCompat",
+                color = Color.white,
+                renderQueue = (int)RenderQueue.Geometry
+            };
+
+            if (texture != null)
+            {
+                ApplyMikuTextureSafe(material, texture);
+            }
+
+            ApplyRealisticMaterialTuning(material);
+            return material;
+        }
+
+        private static void EnsureRendererMainTexCompatibility(Renderer renderer)
+        {
+            if (renderer == null)
+            {
+                return;
+            }
+
+            Material[] materials = renderer.sharedMaterials;
+            if (materials == null || materials.Length == 0)
+            {
+                Material fallback = CreateMainTexCompatMaterial(GetMikuTexture()) ?? CreateRendererMaterialInstance();
+                if (fallback != null)
+                {
+                    renderer.sharedMaterial = fallback;
+                }
+
+                return;
+            }
+
+            for (int i = 0; i < materials.Length; i++)
+            {
+                if (materials[i] != null && materials[i].HasProperty("_MainTex"))
+                {
+                    return;
+                }
+            }
+
+            Material compat = CreateMainTexCompatMaterial(GetMikuTexture());
+            if (compat == null)
+            {
+                return;
+            }
+
+            materials[0] = compat;
+            renderer.sharedMaterials = materials;
+        }
+
         private static void EnsureItemRendererRefs(Item item, Transform mikuRoot)
         {
             Renderer[] mikuRenderers = mikuRoot.GetComponentsInChildren<Renderer>(true);
@@ -1044,7 +1073,34 @@ namespace MikuBongFix
                 return;
             }
 
-            item.mainRenderer = mikuRenderers[0];
+            Renderer primaryRenderer = null;
+            for (int i = 0; i < mikuRenderers.Length; i++)
+            {
+                Renderer renderer = mikuRenderers[i];
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                if (primaryRenderer == null)
+                {
+                    primaryRenderer = renderer;
+                }
+
+                if (RendererHasMainTexSlot(renderer))
+                {
+                    primaryRenderer = renderer;
+                    break;
+                }
+            }
+
+            if (primaryRenderer == null)
+            {
+                return;
+            }
+
+            EnsureRendererMainTexCompatibility(primaryRenderer);
+            item.mainRenderer = primaryRenderer;
             item.addtlRenderers = mikuRenderers;
         }
 
@@ -1402,6 +1458,13 @@ namespace MikuBongFix
         }
 
         [HarmonyPatch("SetState")]
+        [HarmonyPrefix]
+        public static void Item_SetState_Prefix(Item __instance)
+        {
+            EnsureReplacementAndVisibility(__instance, true);
+        }
+
+        [HarmonyPatch("SetState")]
         [HarmonyPostfix]
         public static void Item_SetState_Postfix(Item __instance)
         {
@@ -1413,6 +1476,20 @@ namespace MikuBongFix
         public static void Item_Update_Postfix(Item __instance)
         {
             EnsureReplacementAndVisibility(__instance, false);
+        }
+
+        [HarmonyPatch("RequestPickup")]
+        [HarmonyPrefix]
+        public static void Item_RequestPickup_Prefix(Item __instance)
+        {
+            EnsureReplacementAndVisibility(__instance, true);
+        }
+
+        [HarmonyPatch("RequestPickup")]
+        [HarmonyPostfix]
+        public static void Item_RequestPickup_Postfix(Item __instance)
+        {
+            EnsureReplacementAndVisibility(__instance, true);
         }
 
         [HarmonyPatch("HideRenderers")]
@@ -1431,32 +1508,24 @@ namespace MikuBongFix
             }
 
             mikuRoot.localScale = ResolveScaleByState(__instance);
-            if (IsInBackpack(__instance))
+            if (!mikuRoot.gameObject.activeSelf)
             {
-                if (!mikuRoot.gameObject.activeSelf)
-                {
-                    mikuRoot.gameObject.SetActive(true);
-                }
-
-                int targetLayer = DetermineTargetLayer(__instance);
-                Renderer[] renderers = mikuRoot.GetComponentsInChildren<Renderer>(true);
-                for (int i = 0; i < renderers.Length; i++)
-                {
-                    Renderer renderer = renderers[i];
-                    if (renderer != null)
-                    {
-                        ConfigureMikuRenderer(renderer, targetLayer);
-                    }
-                }
-
-                EnsureItemRendererRefs(__instance, mikuRoot);
-                return false;
+                mikuRoot.gameObject.SetActive(true);
             }
 
-            if (mikuRoot.gameObject.activeSelf)
+            int targetLayer = DetermineTargetLayer(__instance);
+            Renderer[] renderers = mikuRoot.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
             {
-                mikuRoot.gameObject.SetActive(false);
+                Renderer renderer = renderers[i];
+                if (renderer != null)
+                {
+                    ConfigureMikuRenderer(renderer, targetLayer);
+                }
             }
+
+            DisableOriginalRenderers(__instance);
+            EnsureItemRendererRefs(__instance, mikuRoot);
 
             return false;
         }

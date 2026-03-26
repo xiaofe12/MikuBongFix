@@ -1,44 +1,32 @@
 # MikuBongFix
 
-Replaces BingBong with Miku plushie model in PEAK game.
+将 PEAK 里的 BingBong 替换为 Miku 外观，并修复可见性/材质问题。
 
-## Features
+## 功能
 
-- **Model Replacement**: Replaces BingBong item with cute Miku plushie model
-- **Custom Icon**: Custom Miku icon for inventory display
-- **Custom Audio**: Custom audio responses when interacting
-- **Full Compatibility**: Works in both single-player and multiplayer modes
+- 将 `BingBong` 外观替换为 Miku 模型
+- 保持场景内可见，减少拾取/状态切换时消失问题
+- 使用时触发一次整模挤压效果（不会循环重复）
+- 支持自定义语音文件 `response_0.wav` ~ `response_3.wav`
 
-## Requirements
+## 版本 1.0.2
 
-- [BepInExPack PEAK](https://thunderstore.io/c/peak/p/BepInEx/BepInExPack_PEAK/) v5.4.75301 or later
+- 移除调试日志输出（精简运行日志）
+- 调整挤压表现为慢速单次播放
+- 每次“使用开始”仅触发一次，不会按住反复播放
 
-## Installation
+## 安装
 
-### Via Thunderstore Mod Manager
-1. Install Thunderstore Mod Manager
-2. Search for "MikuBongFix"
-3. Click Install
+1. 安装 `BepInExPack_PEAK`
+2. 将本模组文件夹放入：
+   `PEAK/BepInEx/plugins/MikuBongFix-1.0.2/`
+3. 启动游戏
 
-### Manual Installation
-1. Install [BepInExPack PEAK](https://thunderstore.io/c/peak/p/BepInEx/BepInExPack_PEAK/)
-2. Download the latest release
-3. Extract the contents to `PEAK/BepInEx/plugins/MikuBongFix/`
-4. Launch the game
+## 语音文件
 
-## Configuration
+将以下文件放在插件目录（与 `MikuBongFix.dll` 同级）：
 
-No configuration required. The mod works automatically after installation.
-
-## Changelog
-
-### 1.0.0
-- Initial stable release
-- Fixed model visibility issues (material transparency fix)
-- Added MikuDeformGuard to prevent model deformation
-- Improved renderer handling and material application
-- Updated dependencies to BepInExPack_PEAK
-
-## Support
-
-If you encounter any issues, please report them on [GitHub](https://github.com/xiaofe12/MikuBongFix/issues).
+- `response_0.wav`
+- `response_1.wav`
+- `response_2.wav`
+- `response_3.wav`
