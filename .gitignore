@@ -1,0 +1,13 @@
+# Build outputs / 编译产物
+bin/
+obj/
+
+# Local .NET cache / 本地 .NET 缓存
+.dotnet-home/
+
+# Logs / 日志
+*.log
+
+# Package artifacts / 打包产物
+*.zip
+/Desktop
