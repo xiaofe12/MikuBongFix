@@ -1,32 +1,16 @@
 # MikuBongFix
 
-将 PEAK 里的 BingBong 替换为 Miku 外观，并修复可见性/材质问题。
+Replaces BingBong with Miku plushie model in PEAK game.
 
-## 功能
+## Features
 
-- 将 `BingBong` 外观替换为 Miku 模型
-- 保持场景内可见，减少拾取/状态切换时消失问题
-- 使用时触发一次整模挤压效果（不会循环重复）
-- 支持自定义语音文件 `response_0.wav` ~ `response_3.wav`
+- **Model Replacement**: Replaces BingBong item with cute Miku plushie model
+- **Custom Audio**: Custom audio responses when interacting
 
-## 版本 1.0.2
+## Configuration
 
-- 移除调试日志输出（精简运行日志）
-- 调整挤压表现为慢速单次播放
-- 每次“使用开始”仅触发一次，不会按住反复播放
+The mod now exposes BepInEx config entries. If `PEAKLib.ModConfig` is installed, these options also appear in the in-game Mod Settings page.
 
-## 安装
+## Support
 
-1. 安装 `BepInExPack_PEAK`
-2. 将本模组文件夹放入：
-   `PEAK/BepInEx/plugins/MikuBongFix-1.0.2/`
-3. 启动游戏
-
-## 语音文件
-
-将以下文件放在插件目录（与 `MikuBongFix.dll` 同级）：
-
-- `response_0.wav`
-- `response_1.wav`
-- `response_2.wav`
-- `response_3.wav`
+If you encounter any issues, please report them on [GitHub](https://github.com/xiaofe12/MikuBongFix/issues).

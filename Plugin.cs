@@ -2,6 +2,7 @@
 using System.IO;
 using System.Reflection;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
@@ -9,16 +10,32 @@ using UnityEngine.Rendering;
 
 namespace MikuBongFix
 {
-    [BepInPlugin("com.github.FelineEntity.MikuBongFix", "MikuBongFix", "1.0.2")]
+    [BepInDependency("com.github.PEAKModding.PEAKLib.ModConfig", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInPlugin("com.github.Thanks.MikuBongFix", "MikuBongFix", "1.0.5")]
     public class Plugin : BaseUnityPlugin
     {
+        private const string LegacyPluginId = "com.github.FelineEntity.MikuBongFix";
         private const string BundleFileName = "mikupeak";
         private const string PrefabAssetPath = "assets/mikufumo/mikufumo.prefab";
         private const string MaterialAssetPath = "assets/mikufumo/m_mikufumo.mat";
         private const string IconTextureAssetPath = "assets/mikufumo/miku_icon.png";
         private const string MainTextureAssetPath = "assets/mikufumo/miku.png";
+        private const string ConfigSection = "Main";
+        private const float WorldMinScaleMultiplier = 0.7f;
+        private const float WorldMaxScaleMultiplier = 1.1f;
+        private const float BackpackMinScaleMultiplier = 0.2f;
+        private const float BackpackMaxScaleMultiplier = 1f;
+        private const float DefaultWorldScaleMultiplier = 0.9f;
+        private const float DefaultBackpackScaleMultiplier = 0.4f;
         private static readonly string[] PreferredTextureProps = { "_BaseMap", "_MainTex" };
+        private static readonly string[] PrefabNameHints = { "mikufumo", "miku", "fumo" };
+        private static readonly string[] MaterialNameHints = { "m_mikufumo", "mikufumo", "miku" };
+        private static readonly string[] IconTextureNameHints = { "miku_icon", "icon", "miku" };
+        private static readonly string[] MainTextureNameHints = { "miku", "mikufumo", "albedo" };
         private static readonly Color MikuStyleTint = new Color(0.98f, 1f, 1f, 1f);
+        private static ConfigEntry<bool> _modEnabled;
+        private static ConfigEntry<float> _worldScaleMultiplier;
+        private static ConfigEntry<float> _backpackScaleMultiplier;
 
         private static ManualLogSource _log;
         internal static ManualLogSource Log
@@ -69,11 +86,97 @@ namespace MikuBongFix
             private set { _mikuMainTexture = value; }
         }
 
+        internal static bool ModEnabled
+        {
+            get { return _modEnabled == null || _modEnabled.Value; }
+        }
+
+        internal static bool KeepOriginalRendererRefs
+        {
+            get { return true; }
+        }
+
+        internal static bool EnableVisibilityGuard
+        {
+            get { return true; }
+        }
+
+        internal static float WorldScaleMultiplier
+        {
+            get { return _worldScaleMultiplier == null ? DefaultWorldScaleMultiplier : Mathf.Clamp(_worldScaleMultiplier.Value, WorldMinScaleMultiplier, WorldMaxScaleMultiplier); }
+        }
+
+        internal static float BackpackScaleMultiplier
+        {
+            get { return _backpackScaleMultiplier == null ? DefaultBackpackScaleMultiplier : Mathf.Clamp(_backpackScaleMultiplier.Value, BackpackMinScaleMultiplier, BackpackMaxScaleMultiplier); }
+        }
+
         private void Awake()
         {
             Log = Logger;
-            Harmony.PatchAll(Assembly.GetExecutingAssembly());
+            MigrateLegacyConfigIfNeeded();
+            InitializeConfig();
             LoadAssets();
+            try
+            {
+                Harmony.PatchAll(Assembly.GetExecutingAssembly());
+            }
+            catch (Exception ex)
+            {
+                Log.LogError("Failed to apply Harmony patches: " + ex);
+            }
+        }
+
+        private void MigrateLegacyConfigIfNeeded()
+        {
+            try
+            {
+                string newConfigPath = Config.ConfigFilePath;
+                string oldConfigPath = Path.Combine(Paths.ConfigPath, LegacyPluginId + ".cfg");
+
+                if (string.IsNullOrEmpty(newConfigPath)
+                    || string.IsNullOrEmpty(oldConfigPath)
+                    || File.Exists(newConfigPath)
+                    || !File.Exists(oldConfigPath))
+                {
+                    return;
+                }
+
+                File.Copy(oldConfigPath, newConfigPath, false);
+                Config.Reload();
+                Log.LogInfo("Migrated legacy config to: " + newConfigPath);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning("Failed to migrate legacy config file: " + ex.Message);
+            }
+        }
+
+        private void InitializeConfig()
+        {
+            _modEnabled = Config.Bind(
+                ConfigSection,
+                "Enable Miku Replacement",
+                true,
+                new ConfigDescription(
+                    "Master switch for the mod. When disabled, the original BingBong visuals, name, icon, and colliders are restored.",
+                    null));
+
+            _worldScaleMultiplier = Config.Bind(
+                ConfigSection,
+                "Miku Size In World",
+                DefaultWorldScaleMultiplier,
+                new ConfigDescription(
+                    "Scale multiplier for Miku while held or lying in the world.",
+                    new AcceptableValueRange<float>(WorldMinScaleMultiplier, WorldMaxScaleMultiplier)));
+
+            _backpackScaleMultiplier = Config.Bind(
+                ConfigSection,
+                "Miku Size In Backpack",
+                DefaultBackpackScaleMultiplier,
+                new ConfigDescription(
+                    "Scale multiplier for the Miku replacement while stored in the backpack.",
+                    new AcceptableValueRange<float>(BackpackMinScaleMultiplier, BackpackMaxScaleMultiplier)));
         }
 
         private void LoadAssets()
@@ -86,11 +189,11 @@ namespace MikuBongFix
                 return;
             }
 
-            MochiPrefab = Bundle.LoadAsset<GameObject>(PrefabAssetPath);
-            MochiMaterial = Bundle.LoadAsset<Material>(MaterialAssetPath);
-            MochiTexture = Bundle.LoadAsset<Texture2D>(IconTextureAssetPath);
+            MochiPrefab = LoadBundleAssetWithFallback<GameObject>(PrefabAssetPath, PrefabNameHints);
+            MochiMaterial = LoadBundleAssetWithFallback<Material>(MaterialAssetPath, MaterialNameHints);
+            MochiTexture = LoadBundleAssetWithFallback<Texture2D>(IconTextureAssetPath, IconTextureNameHints);
 
-            Texture2D bundledMainTexture = Bundle.LoadAsset<Texture2D>(MainTextureAssetPath);
+            Texture2D bundledMainTexture = LoadBundleAssetWithFallback<Texture2D>(MainTextureAssetPath, MainTextureNameHints);
             MikuMainTexture = CreateReadableTexture(bundledMainTexture) ?? bundledMainTexture;
 
             if (MochiPrefab == null)
@@ -122,6 +225,148 @@ namespace MikuBongFix
         internal static void VerboseLog(string message)
         {
             // 调试日志已禁用 / debug logs disabled.
+        }
+
+        private static T LoadBundleAssetWithFallback<T>(string preferredPath, params string[] nameHints) where T : UnityEngine.Object
+        {
+            if (Bundle == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(preferredPath))
+            {
+                T directAsset = Bundle.LoadAsset<T>(preferredPath);
+                if (directAsset != null)
+                {
+                    return directAsset;
+                }
+            }
+
+            string[] assetNames = Bundle.GetAllAssetNames();
+            if (assetNames != null)
+            {
+                for (int i = 0; i < assetNames.Length; i++)
+                {
+                    string assetName = assetNames[i];
+                    if (!AssetNameLooksRelevant(assetName, preferredPath, nameHints))
+                    {
+                        continue;
+                    }
+
+                    T assetFromBundleName = Bundle.LoadAsset<T>(assetName);
+                    if (assetFromBundleName != null)
+                    {
+                        Log.LogWarning("Loaded fallback " + typeof(T).Name + " from bundle path: " + assetName);
+                        return assetFromBundleName;
+                    }
+                }
+            }
+
+            T[] typedAssets = Bundle.LoadAllAssets<T>();
+            if (typedAssets == null || typedAssets.Length == 0)
+            {
+                Log.LogWarning("No " + typeof(T).Name + " assets found in bundle for requested path: " + preferredPath);
+                return null;
+            }
+
+            T matchedByObjectName = FindAssetByObjectName(typedAssets, preferredPath, nameHints);
+            if (matchedByObjectName != null)
+            {
+                Log.LogWarning("Loaded fallback " + typeof(T).Name + " by object name: " + matchedByObjectName.name);
+                return matchedByObjectName;
+            }
+
+            if (typedAssets.Length == 1)
+            {
+                Log.LogWarning("Loaded only available " + typeof(T).Name + " asset as fallback: " + typedAssets[0].name);
+                return typedAssets[0];
+            }
+
+            Log.LogWarning("Unable to identify " + typeof(T).Name + " for requested path '" + preferredPath + "'. Candidates: " + string.Join(", ", Array.ConvertAll(typedAssets, asset => asset != null ? asset.name : "<null>")));
+            return null;
+        }
+
+        private static T FindAssetByObjectName<T>(T[] assets, string preferredPath, string[] nameHints) where T : UnityEngine.Object
+        {
+            string preferredName = string.IsNullOrEmpty(preferredPath)
+                ? string.Empty
+                : Path.GetFileNameWithoutExtension(preferredPath);
+
+            for (int i = 0; i < assets.Length; i++)
+            {
+                T asset = assets[i];
+                if (asset == null)
+                {
+                    continue;
+                }
+
+                string assetName = asset.name ?? string.Empty;
+                if (NameMatches(assetName, preferredName) || NameMatchesAnyHint(assetName, nameHints))
+                {
+                    return asset;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool AssetNameLooksRelevant(string assetName, string preferredPath, string[] nameHints)
+        {
+            if (string.IsNullOrEmpty(assetName))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(preferredPath))
+            {
+                if (assetName.Equals(preferredPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                string preferredFileName = Path.GetFileName(preferredPath);
+                string preferredObjectName = Path.GetFileNameWithoutExtension(preferredPath);
+                if (!string.IsNullOrEmpty(preferredFileName) && assetName.EndsWith(preferredFileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (NameMatches(assetName, preferredObjectName))
+                {
+                    return true;
+                }
+            }
+
+            return NameMatchesAnyHint(assetName, nameHints);
+        }
+
+        private static bool NameMatchesAnyHint(string value, string[] hints)
+        {
+            if (string.IsNullOrEmpty(value) || hints == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < hints.Length; i++)
+            {
+                if (NameMatches(value, hints[i]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool NameMatches(string value, string needle)
+        {
+            if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(needle))
+            {
+                return false;
+            }
+
+            return value.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static void ConfigureMochiMaterial(Texture2D mikuMainTexture)
@@ -206,6 +451,7 @@ namespace MikuBongFix
                 return;
             }
 
+            if (material.HasProperty("_Tint")) material.SetColor("_Tint", MikuStyleTint);
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", MikuStyleTint);
             if (material.HasProperty("_Color")) material.SetColor("_Color", MikuStyleTint);
             if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", 0.1f);
@@ -299,8 +545,8 @@ namespace MikuBongFix
         }
 
         public const string Name = "MikuBongFix";
-        public const string Id = "com.github.FelineEntity.MikuBongFix";
-        public const string Version = "1.0.2";
+        public const string Id = "com.github.Thanks.MikuBongFix";
+        public const string Version = "1.0.5";
 
         internal static string directory
         {

@@ -174,8 +174,38 @@ namespace MikuBongFix
             _boundItem = item;
         }
 
+        private bool ShouldSuppressForLocalBackpack()
+        {
+            BackpackOnBackVisuals backpackVisual = GetComponentInParent<BackpackOnBackVisuals>();
+            if (backpackVisual != null)
+            {
+                Character backpackCharacter = GetComponentInParent<Character>();
+                if (backpackCharacter != null && backpackCharacter.IsLocal)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void LateUpdate()
         {
+            if (!Plugin.ModEnabled || !Plugin.EnableVisibilityGuard)
+            {
+                return;
+            }
+
+            if (ShouldSuppressForLocalBackpack())
+            {
+                if (gameObject.activeSelf)
+                {
+                    gameObject.SetActive(false);
+                }
+
+                return;
+            }
+
             if (Time.time < _nextRefreshTime)
             {
                 return;
@@ -265,6 +295,7 @@ namespace MikuBongFix
                 }
 
                 Color mikuTint = Color.white;
+                if (material.HasProperty("_Tint")) material.SetColor("_Tint", mikuTint);
                 if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", mikuTint);
                 if (material.HasProperty("_Color")) material.SetColor("_Color", mikuTint);
             }
@@ -275,13 +306,9 @@ namespace MikuBongFix
     public class ItemPatch
     {
         private const int VisibleLayer = 0;
-        private const float BaseScaleMultiplier = 1f;
-        private const float BackpackScaleMultiplier = 0.4f;
         private static readonly Color MikuMaterialTint = new Color(0.98f, 1f, 1f, 1f);
         private const string MikuVisualName = "MikuFumo_Visual";
         private static readonly Vector3 MikuBaseScale = new Vector3(1.5f, 1.5f, 1.5f);
-        private static readonly Vector3 MikuFixedScale = MikuBaseScale * BaseScaleMultiplier;
-        private static readonly Vector3 MikuBackpackScale = MikuBaseScale * BackpackScaleMultiplier;
         private static readonly Vector3 MikuLocalPosition = new Vector3(0f, 0.2f, 0.1f);
         private static readonly Quaternion MikuLocalRotation = Quaternion.identity;
         private static readonly string[] UnwantedFootKeywords = new[] { "hand", "glove", "mitten" };
@@ -291,7 +318,7 @@ namespace MikuBongFix
             return item != null && item.name.IndexOf("BingBong", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private static bool IsMikuTransform(Transform transform)
+        internal static bool IsMikuTransform(Transform transform)
         {
             return transform != null && transform.GetComponentInParent<MikuMarker>() != null;
         }
@@ -303,12 +330,15 @@ namespace MikuBongFix
 
         private static bool ShouldShowReplacement(Item item)
         {
-            return item != null;
+            return item != null && Plugin.ModEnabled;
         }
 
         private static Vector3 ResolveScaleByState(Item item)
         {
-            return IsInBackpack(item) ? MikuBackpackScale : MikuFixedScale;
+            float scaleMultiplier = IsInBackpack(item)
+                ? Plugin.BackpackScaleMultiplier
+                : Plugin.WorldScaleMultiplier;
+            return MikuBaseScale * scaleMultiplier;
         }
 
         /// <summary>
@@ -467,6 +497,7 @@ namespace MikuBongFix
                 return;
             }
 
+            if (material.HasProperty("_Tint")) material.SetColor("_Tint", MikuMaterialTint);
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", MikuMaterialTint);
             if (material.HasProperty("_Color")) material.SetColor("_Color", MikuMaterialTint);
             if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", 0.1f);
@@ -671,6 +702,29 @@ namespace MikuBongFix
             }
         }
 
+        private static void EnableOriginalColliders(Item item)
+        {
+            Collider[] colliders = item.gameObject.GetComponentsInChildren<Collider>(true);
+            List<Collider> originalColliders = new List<Collider>();
+
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                Collider collider = colliders[i];
+                if (collider == null || IsMikuTransform(collider.transform))
+                {
+                    continue;
+                }
+
+                collider.enabled = true;
+                originalColliders.Add(collider);
+            }
+
+            if (item != null)
+            {
+                item.colliders = originalColliders.ToArray();
+            }
+        }
+
         private static void DisableOriginalColliders(Item item)
         {
             Collider[] colliders = item.gameObject.GetComponentsInChildren<Collider>(true);
@@ -711,6 +765,23 @@ namespace MikuBongFix
             return new Vector3(Mathf.Max(size.x, 0.02f), Mathf.Max(size.y, 0.02f), Mathf.Max(size.z, 0.02f));
         }
 
+        private static bool HasNegativeScaleInHierarchy(Transform transform)
+        {
+            Transform current = transform;
+            while (current != null)
+            {
+                Vector3 localScale = current.localScale;
+                if (localScale.x < 0f || localScale.y < 0f || localScale.z < 0f)
+                {
+                    return true;
+                }
+
+                current = current.parent;
+            }
+
+            return false;
+        }
+
         private static void CopyColliderSettings(Collider source, Collider target)
         {
             if (target == null)
@@ -731,6 +802,11 @@ namespace MikuBongFix
         private static Collider AddBoxColliderForMeshRenderer(MeshRenderer renderer, Collider templateCollider)
         {
             if (renderer == null)
+            {
+                return null;
+            }
+
+            if (HasNegativeScaleInHierarchy(renderer.transform))
             {
                 return null;
             }
@@ -762,6 +838,11 @@ namespace MikuBongFix
         private static Collider AddBoxColliderForSkinnedRenderer(SkinnedMeshRenderer renderer, Collider templateCollider)
         {
             if (renderer == null)
+            {
+                return null;
+            }
+
+            if (HasNegativeScaleInHierarchy(renderer.transform))
             {
                 return null;
             }
@@ -1065,8 +1146,95 @@ namespace MikuBongFix
             renderer.sharedMaterials = materials;
         }
 
+        private static Renderer[] BuildAdditionalRenderers(Renderer primaryRenderer, Renderer[] renderers)
+        {
+            if (renderers == null || renderers.Length == 0)
+            {
+                return Array.Empty<Renderer>();
+            }
+
+            List<Renderer> additionalRenderers = new List<Renderer>();
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer renderer = renderers[i];
+                if (renderer == null || renderer == primaryRenderer)
+                {
+                    continue;
+                }
+
+                additionalRenderers.Add(renderer);
+            }
+
+            return additionalRenderers.Count == 0
+                ? Array.Empty<Renderer>()
+                : additionalRenderers.ToArray();
+        }
+
+        private static bool TryGetOriginalItemRenderers(Item item, out Renderer primaryRenderer, out Renderer[] additionalRenderers)
+        {
+            primaryRenderer = null;
+            additionalRenderers = Array.Empty<Renderer>();
+
+            if (item == null)
+            {
+                return false;
+            }
+
+            Renderer[] allRenderers = item.gameObject.GetComponentsInChildren<Renderer>(true);
+            List<Renderer> originalRenderers = new List<Renderer>();
+
+            for (int i = 0; i < allRenderers.Length; i++)
+            {
+                Renderer renderer = allRenderers[i];
+                if (renderer == null || IsMikuTransform(renderer.transform))
+                {
+                    continue;
+                }
+
+                originalRenderers.Add(renderer);
+            }
+
+            if (originalRenderers.Count == 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < originalRenderers.Count; i++)
+            {
+                Renderer renderer = originalRenderers[i];
+                if (primaryRenderer == null)
+                {
+                    primaryRenderer = renderer;
+                }
+
+                if (RendererHasMainTexSlot(renderer))
+                {
+                    primaryRenderer = renderer;
+                    break;
+                }
+            }
+
+            if (primaryRenderer == null)
+            {
+                return false;
+            }
+
+            additionalRenderers = BuildAdditionalRenderers(primaryRenderer, originalRenderers.ToArray());
+            return true;
+        }
+
         private static void EnsureItemRendererRefs(Item item, Transform mikuRoot)
         {
+            if (Plugin.KeepOriginalRendererRefs)
+            {
+                if (TryGetOriginalItemRenderers(item, out Renderer originalPrimary, out Renderer[] originalAdditional))
+                {
+                    item.mainRenderer = originalPrimary;
+                    item.addtlRenderers = originalAdditional;
+                    return;
+                }
+            }
+
             Renderer[] mikuRenderers = mikuRoot.GetComponentsInChildren<Renderer>(true);
             if (mikuRenderers.Length == 0)
             {
@@ -1101,7 +1269,33 @@ namespace MikuBongFix
 
             EnsureRendererMainTexCompatibility(primaryRenderer);
             item.mainRenderer = primaryRenderer;
-            item.addtlRenderers = mikuRenderers;
+            item.addtlRenderers = BuildAdditionalRenderers(primaryRenderer, mikuRenderers);
+        }
+
+        private static void RestoreOriginalItemRendererRefs(Item item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            if (TryGetOriginalItemRenderers(item, out Renderer originalPrimary, out Renderer[] originalAdditional))
+            {
+                item.mainRenderer = originalPrimary;
+                item.addtlRenderers = originalAdditional;
+            }
+        }
+
+        private static void RemoveReplacement(Item item, Transform mikuRoot)
+        {
+            EnableOriginalRenderers(item);
+            EnableOriginalColliders(item);
+            RestoreOriginalItemRendererRefs(item);
+
+            if (mikuRoot != null)
+            {
+                UnityEngine.Object.Destroy(mikuRoot.gameObject);
+            }
         }
 
         /// <summary>
@@ -1285,8 +1479,6 @@ namespace MikuBongFix
                 return;
             }
 
-            EnsureModelColliders(item, mikuRoot);
-
             int targetLayer = DetermineTargetLayer(item);
             mikuRoot.gameObject.layer = targetLayer;
             Vector3 targetScale = ResolveScaleByState(item);
@@ -1320,8 +1512,13 @@ namespace MikuBongFix
 
             if (!shouldShow)
             {
+                EnableOriginalRenderers(item);
+                EnableOriginalColliders(item);
+                RestoreOriginalItemRendererRefs(item);
                 return;
             }
+
+            EnsureModelColliders(item, mikuRoot);
 
             bool hasVisibleReplacement = HasVisibleReplacementRenderers(mikuRoot);
             if (hasVisibleReplacement)
@@ -1418,7 +1615,22 @@ namespace MikuBongFix
                 return;
             }
 
-            Transform mikuRoot = EnsureMikuModel(item, createIfMissing);
+            Transform mikuRoot = FindMikuRoot(item);
+            if (!Plugin.ModEnabled)
+            {
+                if (mikuRoot != null)
+                {
+                    RemoveReplacement(item, mikuRoot);
+                }
+
+                return;
+            }
+
+            if (mikuRoot == null)
+            {
+                mikuRoot = EnsureMikuModel(item, createIfMissing);
+            }
+
             if (mikuRoot == null)
             {
                 return;
@@ -1496,7 +1708,7 @@ namespace MikuBongFix
         [HarmonyPrefix]
         public static bool Item_HideRenderers_Prefix(Item __instance)
         {
-            if (!IsBingBong(__instance))
+            if (!Plugin.ModEnabled || !IsBingBong(__instance))
             {
                 return true;
             }
@@ -1548,7 +1760,7 @@ namespace MikuBongFix
         [HarmonyPostfix]
         public static void Item_GetIcon(Item.ItemUIData __instance, ref Texture2D __result)
         {
-            if (__instance.itemName == "Bing Bong" && Plugin.MochiTexture != null)
+            if (Plugin.ModEnabled && __instance.itemName == "Bing Bong" && Plugin.MochiTexture != null)
             {
                 __result = Plugin.MochiTexture;
             }
@@ -1558,7 +1770,7 @@ namespace MikuBongFix
         [HarmonyPostfix]
         public static void Item_GetName_Postfix(Item __instance, ref string __result)
         {
-            if (IsBingBong(__instance))
+            if (Plugin.ModEnabled && IsBingBong(__instance))
             {
                 __result = "Miku";
             }
@@ -1568,10 +1780,374 @@ namespace MikuBongFix
         [HarmonyPostfix]
         public static void Item_GetItemName_Postfix(Item __instance, ref string __result)
         {
-            if (IsBingBong(__instance))
+            if (Plugin.ModEnabled && IsBingBong(__instance))
             {
                 __result = "Miku";
             }
+        }
+    }
+
+    [HarmonyPatch]
+    public static class MikuTintCompatibilityPatch
+    {
+        private delegate void ItemCookingIntMethod(ItemCooking instance, int value);
+
+        private static readonly AccessTools.FieldRef<BackpackOnBackVisuals, MeshRenderer[]> BackpackRenderersRef =
+            AccessTools.FieldRefAccess<BackpackOnBackVisuals, MeshRenderer[]>("renderers");
+        private static readonly AccessTools.FieldRef<BackpackOnBackVisuals, Color[]> BackpackDefaultTintsRef =
+            AccessTools.FieldRefAccess<BackpackOnBackVisuals, Color[]>("defaultTints");
+        private static readonly AccessTools.FieldRef<BackpackOnBackVisuals, Character> BackpackCharacterRef =
+            AccessTools.FieldRefAccess<BackpackOnBackVisuals, Character>("character");
+        private static readonly AccessTools.FieldRef<ItemCooking, Renderer[]> ItemCookingRenderersRef =
+            AccessTools.FieldRefAccess<ItemCooking, Renderer[]>("renderers");
+        private static readonly AccessTools.FieldRef<ItemCooking, Color[]> ItemCookingDefaultTintsRef =
+            AccessTools.FieldRefAccess<ItemCooking, Color[]>("defaultTints");
+        private static readonly AccessTools.FieldRef<ItemCooking, bool> ItemCookingSetupRef =
+            AccessTools.FieldRefAccess<ItemCooking, bool>("setup");
+        private static readonly AccessTools.FieldRef<ItemCooking, int> ItemCookingPreCookedRef =
+            AccessTools.FieldRefAccess<ItemCooking, int>("preCooked");
+        private static readonly AccessTools.FieldRef<ItemCooking, bool> ItemCookingIgnoreDefaultCookBehaviorRef =
+            AccessTools.FieldRefAccess<ItemCooking, bool>("ignoreDefaultCookBehavior");
+        private static readonly AccessTools.FieldRef<ItemCooking, int> ItemCookingTimesCookedLocalRef =
+            AccessTools.FieldRefAccess<ItemCooking, int>("<timesCookedLocal>k__BackingField");
+        private static readonly ItemCookingIntMethod RunAdditionalCookingBehaviorsDelegate =
+            AccessTools.MethodDelegate<ItemCookingIntMethod>(AccessTools.Method(typeof(ItemCooking), "RunAdditionalCookingBehaviors"));
+        private static readonly ItemCookingIntMethod ChangeStatsCookedDelegate =
+            AccessTools.MethodDelegate<ItemCookingIntMethod>(AccessTools.Method(typeof(ItemCooking), "ChangeStatsCooked"));
+        private static readonly ItemCookingIntMethod CookVisuallyDelegate =
+            AccessTools.MethodDelegate<ItemCookingIntMethod>(AccessTools.Method(typeof(ItemCooking), "CookVisually"));
+
+        private static Color GetSafeTint(Material material)
+        {
+            if (material == null)
+            {
+                return Color.white;
+            }
+
+            if (material.HasProperty("_Tint"))
+            {
+                return material.GetColor("_Tint");
+            }
+
+            if (material.HasProperty("_BaseColor"))
+            {
+                return material.GetColor("_BaseColor");
+            }
+
+            if (material.HasProperty("_Color"))
+            {
+                return material.GetColor("_Color");
+            }
+
+            return Color.white;
+        }
+
+        private static void TryApplyTint(Material material, Color color)
+        {
+            if (material != null && material.HasProperty("_Tint"))
+            {
+                material.SetColor("_Tint", color);
+            }
+        }
+
+        private static Color[] CaptureDefaultTints(Renderer[] renderers)
+        {
+            Color[] defaultTints = new Color[renderers.Length];
+
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer renderer = renderers[i];
+                defaultTints[i] = renderer == null ? Color.white : GetSafeTint(renderer.material);
+            }
+
+            return defaultTints;
+        }
+
+        private static MeshRenderer[] GetBackpackSafeRenderers(BackpackOnBackVisuals instance)
+        {
+            MeshRenderer[] renderers = instance.GetComponentsInChildren<MeshRenderer>();
+            List<MeshRenderer> safeRenderers = new List<MeshRenderer>();
+
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                MeshRenderer renderer = renderers[i];
+                if (renderer == null || ItemPatch.IsMikuTransform(renderer.transform))
+                {
+                    continue;
+                }
+
+                safeRenderers.Add(renderer);
+            }
+
+            return safeRenderers.ToArray();
+        }
+
+        private static bool ShouldSuppressLocalBackpackVisual(BackpackOnBackVisuals instance)
+        {
+            if (instance == null)
+            {
+                return false;
+            }
+
+            Character backpackCharacter = BackpackCharacterRef(instance);
+            if (backpackCharacter != null)
+            {
+                return backpackCharacter.IsLocal;
+            }
+
+            Character parentCharacter = instance.GetComponentInParent<Character>();
+            return parentCharacter != null && parentCharacter.IsLocal;
+        }
+
+        private static void ApplyLocalBackpackVisualSuppression(BackpackOnBackVisuals instance)
+        {
+            if (!ShouldSuppressLocalBackpackVisual(instance))
+            {
+                return;
+            }
+
+            Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer renderer = renderers[i];
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                renderer.forceRenderingOff = true;
+                renderer.enabled = false;
+            }
+        }
+
+        private static Renderer[] GetItemCookingSafeRenderers(ItemCooking instance)
+        {
+            List<Renderer> safeRenderers = new List<Renderer>();
+            MeshRenderer[] meshRenderers = instance.GetComponentsInChildren<MeshRenderer>();
+            SkinnedMeshRenderer[] skinnedRenderers = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+
+            for (int i = 0; i < meshRenderers.Length; i++)
+            {
+                MeshRenderer renderer = meshRenderers[i];
+                if (renderer == null || ItemPatch.IsMikuTransform(renderer.transform))
+                {
+                    continue;
+                }
+
+                safeRenderers.Add(renderer);
+            }
+
+            for (int i = 0; i < skinnedRenderers.Length; i++)
+            {
+                SkinnedMeshRenderer renderer = skinnedRenderers[i];
+                if (renderer == null || ItemPatch.IsMikuTransform(renderer.transform))
+                {
+                    continue;
+                }
+
+                safeRenderers.Add(renderer);
+            }
+
+            return safeRenderers.ToArray();
+        }
+
+        private static void EnsureBackpackRendererCache(BackpackOnBackVisuals instance)
+        {
+            MeshRenderer[] renderers = BackpackRenderersRef(instance);
+            Color[] defaultTints = BackpackDefaultTintsRef(instance);
+            bool needsRefresh = renderers == null || defaultTints == null || defaultTints.Length != renderers.Length;
+
+            if (!needsRefresh && renderers.Length > 0)
+            {
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    if (renderers[i] != null && ItemPatch.IsMikuTransform(renderers[i].transform))
+                    {
+                        needsRefresh = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!needsRefresh)
+            {
+                return;
+            }
+
+            renderers = GetBackpackSafeRenderers(instance);
+            BackpackRenderersRef(instance) = renderers;
+            BackpackDefaultTintsRef(instance) = CaptureDefaultTints(renderers);
+        }
+
+        private static void EnsureItemCookingRendererCache(ItemCooking instance)
+        {
+            Renderer[] renderers = ItemCookingRenderersRef(instance);
+            Color[] defaultTints = ItemCookingDefaultTintsRef(instance);
+            bool needsRefresh = !ItemCookingSetupRef(instance) || renderers == null || defaultTints == null || defaultTints.Length != renderers.Length;
+
+            if (!needsRefresh && renderers.Length > 0)
+            {
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    if (renderers[i] != null && ItemPatch.IsMikuTransform(renderers[i].transform))
+                    {
+                        needsRefresh = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!needsRefresh)
+            {
+                return;
+            }
+
+            renderers = GetItemCookingSafeRenderers(instance);
+            ItemCookingRenderersRef(instance) = renderers;
+            ItemCookingDefaultTintsRef(instance) = CaptureDefaultTints(renderers);
+            ItemCookingSetupRef(instance) = true;
+        }
+
+        [HarmonyPatch(typeof(BackpackOnBackVisuals), "InitRenderers")]
+        [HarmonyPrefix]
+        public static bool BackpackOnBackVisuals_InitRenderers_Prefix(BackpackOnBackVisuals __instance)
+        {
+            MeshRenderer[] renderers = GetBackpackSafeRenderers(__instance);
+            BackpackRenderersRef(__instance) = renderers;
+            BackpackDefaultTintsRef(__instance) = CaptureDefaultTints(renderers);
+            ApplyLocalBackpackVisualSuppression(__instance);
+            return false;
+        }
+
+        [HarmonyPatch(typeof(BackpackOnBackVisuals), "CookVisually")]
+        [HarmonyPrefix]
+        public static bool BackpackOnBackVisuals_CookVisually_Prefix(BackpackOnBackVisuals __instance, int __0)
+        {
+            EnsureBackpackRendererCache(__instance);
+            ApplyLocalBackpackVisualSuppression(__instance);
+            if (ShouldSuppressLocalBackpackVisual(__instance))
+            {
+                return false;
+            }
+
+            if (__0 <= 0)
+            {
+                return false;
+            }
+
+            MeshRenderer[] renderers = BackpackRenderersRef(__instance) ?? Array.Empty<MeshRenderer>();
+            Color[] defaultTints = BackpackDefaultTintsRef(__instance) ?? Array.Empty<Color>();
+            Color cookTint = ItemCooking.GetCookColor(__0);
+
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                MeshRenderer renderer = renderers[i];
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                Color baseTint = i < defaultTints.Length ? defaultTints[i] : Color.white;
+                TryApplyTint(renderer.material, baseTint * cookTint);
+            }
+
+            return false;
+        }
+
+        [HarmonyPatch(typeof(BackpackOnBackVisuals), "PutItemInBackpack")]
+        [HarmonyPostfix]
+        public static void BackpackOnBackVisuals_PutItemInBackpack_Postfix(BackpackOnBackVisuals __instance)
+        {
+            ApplyLocalBackpackVisualSuppression(__instance);
+        }
+
+        [HarmonyPatch(typeof(BackpackOnBackVisuals), "RefreshCooking")]
+        [HarmonyPostfix]
+        public static void BackpackOnBackVisuals_RefreshCooking_Postfix(BackpackOnBackVisuals __instance)
+        {
+            ApplyLocalBackpackVisualSuppression(__instance);
+        }
+
+        [HarmonyPatch(typeof(BackpackOnBackVisuals), "OnEnable")]
+        [HarmonyPostfix]
+        public static void BackpackOnBackVisuals_OnEnable_Postfix(BackpackOnBackVisuals __instance)
+        {
+            ApplyLocalBackpackVisualSuppression(__instance);
+        }
+
+        [HarmonyPatch(typeof(ItemCooking), "UpdateCookedBehavior")]
+        [HarmonyPrefix]
+        public static bool ItemCooking_UpdateCookedBehavior_Prefix(ItemCooking __instance)
+        {
+            Item item = __instance.GetComponent<Item>();
+            if (item == null)
+            {
+                return true;
+            }
+
+            IntItemData cookedData = item.GetData<IntItemData>(DataEntryKey.CookedAmount);
+            if (cookedData == null)
+            {
+                return true;
+            }
+
+            if (cookedData.Value == 0)
+            {
+                cookedData.Value += ItemCookingPreCookedRef(__instance);
+            }
+
+            EnsureItemCookingRendererCache(__instance);
+
+            int cookedDelta = cookedData.Value - ItemCookingTimesCookedLocalRef(__instance);
+            CookVisuallyDelegate(__instance, cookedData.Value);
+
+            if (!ItemCookingIgnoreDefaultCookBehaviorRef(__instance) && cookedDelta > 0)
+            {
+                int startCookCount = 1 + ItemCookingTimesCookedLocalRef(__instance);
+                for (int i = startCookCount; i <= cookedData.Value; i++)
+                {
+                    ChangeStatsCookedDelegate(__instance, i);
+                }
+            }
+
+            RunAdditionalCookingBehaviorsDelegate(__instance, cookedData.Value);
+            ItemCookingTimesCookedLocalRef(__instance) = cookedData.Value;
+            return false;
+        }
+
+        [HarmonyPatch(typeof(ItemCooking), "CookVisually")]
+        [HarmonyPrefix]
+        public static bool ItemCooking_CookVisually_Prefix(ItemCooking __instance, int __0)
+        {
+            EnsureItemCookingRendererCache(__instance);
+            if (__0 <= 0)
+            {
+                return false;
+            }
+
+            Renderer[] renderers = ItemCookingRenderersRef(__instance) ?? Array.Empty<Renderer>();
+            Color[] defaultTints = ItemCookingDefaultTintsRef(__instance) ?? Array.Empty<Color>();
+            Color cookTint = ItemCooking.GetCookColor(__0);
+
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer renderer = renderers[i];
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                Material[] materials = renderer.materials;
+                Color baseTint = i < defaultTints.Length ? defaultTints[i] : Color.white;
+                Color targetTint = baseTint * cookTint;
+
+                for (int j = 0; j < materials.Length; j++)
+                {
+                    TryApplyTint(materials[j], targetTint);
+                }
+            }
+
+            return false;
         }
     }
 

@@ -1,9 +1,0 @@
-{
-  "name": "MikuBongFix",
-  "version_number": "1.0.0",
-  "website_url": "https://github.com/xiaofe12/MikuBongFix",
-  "description": "Replaces BingBong with Miku model and custom audio responses.",
-  "dependencies": [
-    "BepInEx-BepInExPack_PEAK-5.4.75301"
-  ]
-}
