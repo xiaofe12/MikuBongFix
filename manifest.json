@@ -1,6 +1,6 @@
 {
   "name": "MikuBongFix",
-  "version_number": "1.0.5",
+  "version_number": "1.1.0",
   "website_url": "https://github.com/xiaofe12/MikuBongFix",
   "description": "Replaces BingBong with a visible Miku plushie model, custom audio responses.",
   "dependencies": [

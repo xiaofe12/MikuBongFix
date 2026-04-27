@@ -11,7 +11,7 @@ using UnityEngine.Rendering;
 namespace MikuBongFix
 {
     [BepInDependency("com.github.PEAKModding.PEAKLib.ModConfig", BepInDependency.DependencyFlags.SoftDependency)]
-    [BepInPlugin("com.github.Thanks.MikuBongFix", "MikuBongFix", "1.0.5")]
+    [BepInPlugin("com.github.Thanks.MikuBongFix", "MikuBongFix", "1.1.0")]
     public class Plugin : BaseUnityPlugin
     {
         private const string LegacyPluginId = "com.github.FelineEntity.MikuBongFix";

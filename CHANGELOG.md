@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+- Changed backpack hiding behavior to match the implementation used by Miku_three-physic.
+- The replacement model now follows the original renderer hide rule instead of forcing local backpack visuals off.
+
 ## 1.0.5
 - Added a master enable/disable switch for the mod.
 - Removed `Main / Keep Miku Visible` and `Main / Safe Pickup And Backpack Materials` from config UI; both safeguards are now always enabled internally.

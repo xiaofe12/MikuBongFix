@@ -11,6 +11,7 @@ namespace MikuBongFix
     /// </summary>
     public class MikuMarker : MonoBehaviour
     {
+        public bool HiddenByOriginalRule;
     }
 
     /// <summary>
@@ -174,21 +175,6 @@ namespace MikuBongFix
             _boundItem = item;
         }
 
-        private bool ShouldSuppressForLocalBackpack()
-        {
-            BackpackOnBackVisuals backpackVisual = GetComponentInParent<BackpackOnBackVisuals>();
-            if (backpackVisual != null)
-            {
-                Character backpackCharacter = GetComponentInParent<Character>();
-                if (backpackCharacter != null && backpackCharacter.IsLocal)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         private void LateUpdate()
         {
             if (!Plugin.ModEnabled || !Plugin.EnableVisibilityGuard)
@@ -196,13 +182,9 @@ namespace MikuBongFix
                 return;
             }
 
-            if (ShouldSuppressForLocalBackpack())
+            MikuMarker marker = GetComponent<MikuMarker>();
+            if (marker != null && marker.HiddenByOriginalRule)
             {
-                if (gameObject.activeSelf)
-                {
-                    gameObject.SetActive(false);
-                }
-
                 return;
             }
 
@@ -330,7 +312,54 @@ namespace MikuBongFix
 
         private static bool ShouldShowReplacement(Item item)
         {
-            return item != null && Plugin.ModEnabled;
+            return item != null && Plugin.ModEnabled && !IsReplacementHiddenByOriginal(item);
+        }
+
+        private static bool IsReplacementHiddenByOriginal(Item item)
+        {
+            return IsReplacementHiddenByOriginal(FindMikuRoot(item));
+        }
+
+        private static bool IsReplacementHiddenByOriginal(Transform mikuRoot)
+        {
+            if (mikuRoot == null)
+            {
+                return false;
+            }
+
+            MikuMarker marker = mikuRoot.GetComponent<MikuMarker>();
+            return marker != null && marker.HiddenByOriginalRule;
+        }
+
+        private static void SetReplacementHiddenByOriginal(Transform mikuRoot, bool hidden)
+        {
+            if (mikuRoot == null)
+            {
+                return;
+            }
+
+            MikuMarker marker = mikuRoot.GetComponent<MikuMarker>();
+            if (marker != null)
+            {
+                marker.HiddenByOriginalRule = hidden;
+            }
+        }
+
+        private static void HideReplacementForOriginalRule(Item item, Transform mikuRoot)
+        {
+            if (item == null || mikuRoot == null)
+            {
+                return;
+            }
+
+            SetReplacementHiddenByOriginal(mikuRoot, true);
+            DisableOriginalColliders(item);
+            RestoreOriginalItemRendererRefs(item);
+
+            if (mikuRoot.gameObject.activeSelf)
+            {
+                mikuRoot.gameObject.SetActive(false);
+            }
         }
 
         private static Vector3 ResolveScaleByState(Item item)
@@ -1482,6 +1511,7 @@ namespace MikuBongFix
             int targetLayer = DetermineTargetLayer(item);
             mikuRoot.gameObject.layer = targetLayer;
             Vector3 targetScale = ResolveScaleByState(item);
+            bool hiddenByOriginalRule = IsReplacementHiddenByOriginal(mikuRoot);
 
             if (mikuRoot.localPosition != MikuLocalPosition)
             {
@@ -1512,6 +1542,13 @@ namespace MikuBongFix
 
             if (!shouldShow)
             {
+                if (hiddenByOriginalRule)
+                {
+                    DisableOriginalColliders(item);
+                    RestoreOriginalItemRendererRefs(item);
+                    return;
+                }
+
                 EnableOriginalRenderers(item);
                 EnableOriginalColliders(item);
                 RestoreOriginalItemRendererRefs(item);
@@ -1636,6 +1673,11 @@ namespace MikuBongFix
                 return;
             }
 
+            if (!IsInBackpack(item))
+            {
+                SetReplacementHiddenByOriginal(mikuRoot, false);
+            }
+
             MikuRendererGuard guard = mikuRoot.GetComponent<MikuRendererGuard>();
             if (guard != null)
             {
@@ -1705,41 +1747,21 @@ namespace MikuBongFix
         }
 
         [HarmonyPatch("HideRenderers")]
-        [HarmonyPrefix]
-        public static bool Item_HideRenderers_Prefix(Item __instance)
+        [HarmonyPostfix]
+        public static void Item_HideRenderers_Postfix(Item __instance)
         {
             if (!Plugin.ModEnabled || !IsBingBong(__instance))
             {
-                return true;
+                return;
             }
 
-            Transform mikuRoot = EnsureMikuModel(__instance, false);
+            Transform mikuRoot = EnsureMikuModel(__instance, true);
             if (mikuRoot == null)
             {
-                return true;
+                return;
             }
 
-            mikuRoot.localScale = ResolveScaleByState(__instance);
-            if (!mikuRoot.gameObject.activeSelf)
-            {
-                mikuRoot.gameObject.SetActive(true);
-            }
-
-            int targetLayer = DetermineTargetLayer(__instance);
-            Renderer[] renderers = mikuRoot.GetComponentsInChildren<Renderer>(true);
-            for (int i = 0; i < renderers.Length; i++)
-            {
-                Renderer renderer = renderers[i];
-                if (renderer != null)
-                {
-                    ConfigureMikuRenderer(renderer, targetLayer);
-                }
-            }
-
-            DisableOriginalRenderers(__instance);
-            EnsureItemRendererRefs(__instance, mikuRoot);
-
-            return false;
+            HideReplacementForOriginalRule(__instance, mikuRoot);
         }
 
         [HarmonyPatch("PutInBackpackRPC")]
@@ -1796,8 +1818,6 @@ namespace MikuBongFix
             AccessTools.FieldRefAccess<BackpackOnBackVisuals, MeshRenderer[]>("renderers");
         private static readonly AccessTools.FieldRef<BackpackOnBackVisuals, Color[]> BackpackDefaultTintsRef =
             AccessTools.FieldRefAccess<BackpackOnBackVisuals, Color[]>("defaultTints");
-        private static readonly AccessTools.FieldRef<BackpackOnBackVisuals, Character> BackpackCharacterRef =
-            AccessTools.FieldRefAccess<BackpackOnBackVisuals, Character>("character");
         private static readonly AccessTools.FieldRef<ItemCooking, Renderer[]> ItemCookingRenderersRef =
             AccessTools.FieldRefAccess<ItemCooking, Renderer[]>("renderers");
         private static readonly AccessTools.FieldRef<ItemCooking, Color[]> ItemCookingDefaultTintsRef =
@@ -1880,44 +1900,6 @@ namespace MikuBongFix
             }
 
             return safeRenderers.ToArray();
-        }
-
-        private static bool ShouldSuppressLocalBackpackVisual(BackpackOnBackVisuals instance)
-        {
-            if (instance == null)
-            {
-                return false;
-            }
-
-            Character backpackCharacter = BackpackCharacterRef(instance);
-            if (backpackCharacter != null)
-            {
-                return backpackCharacter.IsLocal;
-            }
-
-            Character parentCharacter = instance.GetComponentInParent<Character>();
-            return parentCharacter != null && parentCharacter.IsLocal;
-        }
-
-        private static void ApplyLocalBackpackVisualSuppression(BackpackOnBackVisuals instance)
-        {
-            if (!ShouldSuppressLocalBackpackVisual(instance))
-            {
-                return;
-            }
-
-            Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
-            for (int i = 0; i < renderers.Length; i++)
-            {
-                Renderer renderer = renderers[i];
-                if (renderer == null)
-                {
-                    continue;
-                }
-
-                renderer.forceRenderingOff = true;
-                renderer.enabled = false;
-            }
         }
 
         private static Renderer[] GetItemCookingSafeRenderers(ItemCooking instance)
@@ -2015,7 +1997,6 @@ namespace MikuBongFix
             MeshRenderer[] renderers = GetBackpackSafeRenderers(__instance);
             BackpackRenderersRef(__instance) = renderers;
             BackpackDefaultTintsRef(__instance) = CaptureDefaultTints(renderers);
-            ApplyLocalBackpackVisualSuppression(__instance);
             return false;
         }
 
@@ -2024,12 +2005,6 @@ namespace MikuBongFix
         public static bool BackpackOnBackVisuals_CookVisually_Prefix(BackpackOnBackVisuals __instance, int __0)
         {
             EnsureBackpackRendererCache(__instance);
-            ApplyLocalBackpackVisualSuppression(__instance);
-            if (ShouldSuppressLocalBackpackVisual(__instance))
-            {
-                return false;
-            }
-
             if (__0 <= 0)
             {
                 return false;
@@ -2052,27 +2027,6 @@ namespace MikuBongFix
             }
 
             return false;
-        }
-
-        [HarmonyPatch(typeof(BackpackOnBackVisuals), "PutItemInBackpack")]
-        [HarmonyPostfix]
-        public static void BackpackOnBackVisuals_PutItemInBackpack_Postfix(BackpackOnBackVisuals __instance)
-        {
-            ApplyLocalBackpackVisualSuppression(__instance);
-        }
-
-        [HarmonyPatch(typeof(BackpackOnBackVisuals), "RefreshCooking")]
-        [HarmonyPostfix]
-        public static void BackpackOnBackVisuals_RefreshCooking_Postfix(BackpackOnBackVisuals __instance)
-        {
-            ApplyLocalBackpackVisualSuppression(__instance);
-        }
-
-        [HarmonyPatch(typeof(BackpackOnBackVisuals), "OnEnable")]
-        [HarmonyPostfix]
-        public static void BackpackOnBackVisuals_OnEnable_Postfix(BackpackOnBackVisuals __instance)
-        {
-            ApplyLocalBackpackVisualSuppression(__instance);
         }
 
         [HarmonyPatch(typeof(ItemCooking), "UpdateCookedBehavior")]
